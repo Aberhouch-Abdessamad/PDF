@@ -32,3 +32,20 @@ input[type="file"] {
     padding: 10px;
     cursor: pointer;
 }
+#dropZone {
+    border: 2px dashed #ccc;
+    padding: 20px;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+#preview img {
+    max-width: 200px;
+    margin: 10px;
+}
+
+#result {
+    display: none;
+    margin-top: 20px;
+}
+
