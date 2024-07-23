@@ -7,7 +7,7 @@ document.getElementById('generateBtn').addEventListener('click', async function(
     const previewDiv = document.getElementById('preview');
 
     if (files.length === 0) {
-        alert('Please select one or more files to generate the PDF.');
+        showResult('Please select one or more files to generate the PDF.', false);
         return;
     }
 
@@ -16,56 +16,51 @@ document.getElementById('generateBtn').addEventListener('click', async function(
     progress.style.display = 'block';
 
     try {
-        let sections = []; // For Table of Contents
+        let yOffset = 10; // Initial Y position for content
 
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
             const fileType = file.type;
 
             if (file.size > 5 * 1024 * 1024) { // 5 MB size limit
-                alert(`File ${file.name} is too large. Please select files under 5MB.`);
+                showResult(`File ${file.name} is too large. Please select files under 5MB.`, false);
                 continue;
             }
 
             if (fileType.startsWith('image/')) {
                 const img = await loadImage(file);
                 const imgData = getBase64Image(img);
-                pdf.addImage(imgData, 'JPEG', 10, 10, 180, 80);
-                pdf.addPage();
-                previewDiv.innerHTML += `<img src="${img.src}" alt="${file.name}">`;
-                sections.push(file.name); // Add to Table of Contents
+                const imgWidth = 180;
+                const imgHeight = (img.height * imgWidth) / img.width;
+
+                if (yOffset + imgHeight > pdf.internal.pageSize.height - 20) {
+                    pdf.addPage();
+                    yOffset = 10;
+                }
+
+                pdf.addImage(imgData, 'JPEG', 10, yOffset, imgWidth, imgHeight);
+                yOffset += imgHeight + 10;
+                previewDiv.appendChild(img);
             } else if (fileType === 'text/plain') {
                 const text = await readFile(file);
-                pdf.text(text, 10, 10);
-                pdf.addPage();
-                previewDiv.innerHTML += `<pre>${text}</pre>`;
-                sections.push(file.name); // Add to Table of Contents
+                const lines = pdf.splitTextToSize(text, 180);
+
+                if (yOffset + (lines.length * 7) > pdf.internal.pageSize.height - 20) {
+                    pdf.addPage();
+                    yOffset = 10;
+                }
+
+                pdf.text(lines, 10, yOffset);
+                yOffset += lines.length * 7 + 10;
+                const pre = document.createElement('pre');
+                pre.textContent = text;
+                previewDiv.appendChild(pre);
             } else {
-                alert(`Unsupported file type: ${fileType}`);
+                showResult(`Unsupported file type: ${fileType}`, false);
                 continue;
             }
         }
 
-        // Add Table of Contents
-        pdf.addPage();
-        addTableOfContents(pdf, sections);
-
-        // Add Header and Footer to each page
-        const totalPages = pdf.internal.getNumberOfPages();
-        for (let i = 1; i <= totalPages; i++) {
-            pdf.setPage(i);
-            addHeaderFooter(pdf, i);
-        }
-
-        // PDF Metadata
-        pdf.setProperties({
-            title: 'Generated PDF',
-            subject: 'Subject of the PDF',
-            author: 'Your Name',
-            creator: 'Your Application'
-        });
-
-        pdf.deletePage(pdf.internal.getNumberOfPages()); // Remove the last empty page
         pdf.save('generated.pdf');
         showResult('PDF generated successfully!', true);
     } catch (error) {
@@ -75,6 +70,9 @@ document.getElementById('generateBtn').addEventListener('click', async function(
         progress.style.display = 'none'; // Hide progress indicator
     }
 });
+
+document.getElementById('generatePowerPoint').addEventListener('click', generatePowerPoint);
+document.getElementById('generateExcel').addEventListener('click', generateExcel);
 
 function loadImage(file) {
     return new Promise((resolve, reject) => {
@@ -109,23 +107,6 @@ function readFile(file) {
     });
 }
 
-function addHeaderFooter(pdf, pageIndex) {
-    const headerText = 'My PDF Header';
-    const footerText = `Page ${pageIndex}`;
-    pdf.setFontSize(12);
-    pdf.text(headerText, 10, 10);
-    pdf.text(footerText, 10, pdf.internal.pageSize.height - 10);
-}
-
-function addTableOfContents(pdf, sections) {
-    pdf.addPage();
-    pdf.setFontSize(16);
-    pdf.text('Table of Contents', 10, 10);
-    sections.forEach((section, index) => {
-        pdf.text(`${index + 1}. ${section}`, 10, 20 + index * 10);
-    });
-}
-
 function showResult(message, isSuccess) {
     const resultDiv = document.getElementById('result');
     resultDiv.textContent = message;
@@ -151,7 +132,7 @@ dropZone.addEventListener('drop', (event) => {
     event.preventDefault();
     event.stopPropagation();
     dropZone.style.backgroundColor = '';
-    fileInput.files = event.dataTransfer.files; // Set dropped files to file input
+    fileInput.files = event.dataTransfer.files;
     previewFiles(event.dataTransfer.files);
 });
 
@@ -169,9 +150,7 @@ function previewFiles(files) {
 
         if (fileType.startsWith('image/')) {
             loadImage(file).then(img => {
-                const imgElement = document.createElement('img');
-                imgElement.src = img.src;
-                previewDiv.appendChild(imgElement);
+                previewDiv.appendChild(img);
             });
         } else if (fileType === 'text/plain') {
             readFile(file).then(text => {
@@ -181,4 +160,40 @@ function previewFiles(files) {
             });
         }
     }
+}
+
+function generatePowerPoint() {
+    const files = fileInput.files;
+    let content = `PowerPoint Presentation Content:\n`;
+
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        content += `Slide ${i + 1}: ${file.name}\n`;
+        content += `- Type: ${file.type}\n`;
+        content += `- Size: ${file.size} bytes\n\n`;
+    }
+
+    downloadTextFile(content, 'presentation.txt');
+}
+
+function generateExcel() {
+    const files = fileInput.files;
+    let content = `File Name,File Type,File Size (bytes)\n`;
+
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        content += `${file.name},${file.type},${file.size}\n`;
+    }
+
+    downloadTextFile(content, 'file_data.csv');
+}
+
+function downloadTextFile(content, fileName) {
+    const element = document.createElement('a');
+    element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(content));
+    element.setAttribute('download', fileName);
+    element.style.display = 'none';
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
 }
