@@ -1,199 +1,305 @@
-document.getElementById('generateBtn').addEventListener('click', async function() {
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF();
-    const fileInput = document.getElementById('fileInput');
-    const files = fileInput.files;
-    const progress = document.getElementById('result');
-    const previewDiv = document.getElementById('preview');
+class FileConverter {
+    constructor() {
+        // Initialize class properties
+        this.files = new Map();
+        this.maxFileSize = 5 * 1024 * 1024; // 5MB
+        this.supportedTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'text/plain']);
+        this.isProcessing = false;
 
-    if (files.length === 0) {
-        showResult('Please select one or more files to generate the PDF.', false);
-        return;
+        // DOM elements
+        this.elements = {
+            dropZone: document.getElementById('dropZone'),
+            fileInput: document.getElementById('fileInput'),
+            fileList: document.getElementById('fileList'),
+            preview: document.getElementById('preview'),
+            generateBtn: document.getElementById('generateBtn'),
+            result: document.getElementById('result')
+        };
+
+        // Bind methods
+        this.handleDrop = this.handleDrop.bind(this);
+        this.handleFileInput = this.handleFileInput.bind(this);
+        this.generatePDF = this.generatePDF.bind(this);
+
+        // Initialize event listeners
+        this.initializeEventListeners();
     }
 
-    progress.textContent = 'Generating PDF...';
-    progress.style.color = 'black';
-    progress.style.display = 'block';
+    initializeEventListeners() {
+        // Drag and drop events
+        this.elements.dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.elements.dropZone.classList.add('border-primary');
+        });
 
-    try {
-        let yOffset = 10; // Initial Y position for content
+        this.elements.dropZone.addEventListener('dragleave', () => {
+            this.elements.dropZone.classList.remove('border-primary');
+        });
 
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            const fileType = file.type;
+        this.elements.dropZone.addEventListener('drop', this.handleDrop);
 
-            if (file.size > 5 * 1024 * 1024) { // 5 MB size limit
-                showResult(`File ${file.name} is too large. Please select files under 5MB.`, false);
-                continue;
+        // File input change event
+        this.elements.fileInput.addEventListener('change', this.handleFileInput);
+
+        // Generate PDF button click event
+        this.elements.generateBtn.addEventListener('click', this.generatePDF);
+    }
+
+    handleDrop(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        this.elements.dropZone.classList.remove('border-primary');
+        const droppedFiles = Array.from(e.dataTransfer.files);
+        this.processFiles(droppedFiles);
+    }
+
+    handleFileInput(e) {
+        const selectedFiles = Array.from(e.target.files);
+        this.processFiles(selectedFiles);
+    }
+
+    async processFiles(newFiles) {
+        const validFiles = [];
+        const errors = [];
+
+        for (const file of newFiles) {
+            try {
+                if (!this.supportedTypes.has(file.type)) {
+                    errors.push(`${file.name}: Unsupported file type`);
+                    continue;
+                }
+
+                if (file.size > this.maxFileSize) {
+                    errors.push(`${file.name}: File size exceeds 5MB limit`);
+                    continue;
+                }
+
+                validFiles.push(file);
+                this.files.set(file.name, file);
+            } catch (error) {
+                console.error('Error processing file:', error);
+                errors.push(`${file.name}: Failed to process file`);
             }
+        }
 
-            if (fileType.startsWith('image/')) {
-                const img = await loadImage(file);
-                const imgData = getBase64Image(img);
-                const imgWidth = 180;
-                const imgHeight = (img.height * imgWidth) / img.width;
+        if (errors.length > 0) {
+            this.showStatus(errors.join('\n'), 'error');
+        }
 
-                if (yOffset + imgHeight > pdf.internal.pageSize.height - 20) {
-                    pdf.addPage();
-                    yOffset = 10;
+        if (validFiles.length > 0) {
+            this.updateFileList();
+            this.updatePreview(validFiles);
+            this.elements.generateBtn.disabled = false;
+        }
+    }
+
+    async updatePreview(newFiles) {
+        this.elements.preview.innerHTML = '';
+
+        for (const file of newFiles) {
+            try {
+                if (file.type.startsWith('image/')) {
+                    await this.previewImage(file);
+                } else if (file.type === 'text/plain') {
+                    await this.previewText(file);
                 }
+            } catch (error) {
+                console.error('Error creating preview:', error);
+                this.showStatus(`Failed to preview ${file.name}`, 'error');
+            }
+        }
+    }
 
-                pdf.addImage(imgData, 'JPEG', 10, yOffset, imgWidth, imgHeight);
-                yOffset += imgHeight + 10;
-                previewDiv.appendChild(img);
-            } else if (fileType === 'text/plain') {
-                const text = await readFile(file);
-                const lines = pdf.splitTextToSize(text, 180);
+    async previewImage(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = document.createElement('img');
+                img.src = e.target.result;
+                img.className = 'max-w-full h-auto mb-4 rounded';
+                this.elements.preview.appendChild(img);
+                resolve();
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    }
 
-                if (yOffset + (lines.length * 7) > pdf.internal.pageSize.height - 20) {
-                    pdf.addPage();
-                    yOffset = 10;
-                }
-
-                pdf.text(lines, 10, yOffset);
-                yOffset += lines.length * 7 + 10;
+    async previewText(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
                 const pre = document.createElement('pre');
-                pre.textContent = text;
-                previewDiv.appendChild(pre);
-            } else {
-                showResult(`Unsupported file type: ${fileType}`, false);
-                continue;
+                pre.textContent = e.target.result;
+                pre.className = 'bg-gray-50 p-4 rounded mb-4 overflow-x-auto';
+                this.elements.preview.appendChild(pre);
+                resolve();
+            };
+            reader.onerror = reject;
+            reader.readAsText(file);
+        });
+    }
+
+    updateFileList() {
+        this.elements.fileList.innerHTML = '';
+
+        for (const [fileName, file] of this.files.entries()) {
+            const fileItem = this.createFileListItem(fileName, file);
+            this.elements.fileList.appendChild(fileItem);
+        }
+    }
+
+    createFileListItem(fileName, file) {
+        const div = document.createElement('div');
+        div.className = 'file-item';
+
+        const fileInfo = document.createElement('div');
+        fileInfo.className = 'file-info';
+        
+        const name = document.createElement('h3');
+        name.textContent = fileName;
+        
+        const size = document.createElement('p');
+        size.textContent = this.formatFileSize(file.size);
+
+        const removeButton = document.createElement('button');
+        removeButton.className = 'remove-btn';
+        removeButton.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" 
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+        `;
+        removeButton.onclick = () => this.removeFile(fileName);
+
+        fileInfo.appendChild(name);
+        fileInfo.appendChild(size);
+        div.appendChild(fileInfo);
+        div.appendChild(removeButton);
+
+        return div;
+    }
+
+    removeFile(fileName) {
+        this.files.delete(fileName);
+        this.updateFileList();
+        this.elements.generateBtn.disabled = this.files.size === 0;
+        
+        if (this.files.size === 0) {
+            this.elements.preview.innerHTML = '';
+        }
+    }
+
+    async generatePDF() {
+        if (this.files.size === 0) {
+            this.showStatus('Please add at least one file', 'error');
+            return;
+        }
+
+        this.isProcessing = true;
+        this.elements.generateBtn.disabled = true;
+        this.showStatus('Generating PDF...', 'info');
+
+        try {
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF();
+            let yOffset = 10;
+
+            for (const [_, file] of this.files) {
+                if (file.type.startsWith('image/')) {
+                    const imgData = await this.getImageData(file);
+                    const imgProps = await this.getImageProperties(imgData);
+                    
+                    if (yOffset + imgProps.height > pdf.internal.pageSize.height - 20) {
+                        pdf.addPage();
+                        yOffset = 10;
+                    }
+
+                    pdf.addImage(imgData, 'JPEG', 10, yOffset, imgProps.width, imgProps.height);
+                    yOffset += imgProps.height + 10;
+                } else if (file.type === 'text/plain') {
+                    const text = await this.readFileAsText(file);
+                    const lines = pdf.splitTextToSize(text, 180);
+
+                    if (yOffset + (lines.length * 7) > pdf.internal.pageSize.height - 20) {
+                        pdf.addPage();
+                        yOffset = 10;
+                    }
+
+                    pdf.text(lines, 10, yOffset);
+                    yOffset += lines.length * 7 + 10;
+                }
             }
+
+            pdf.save('converted-files.pdf');
+            this.showStatus('PDF generated successfully!', 'success');
+        } catch (error) {
+            console.error('Error generating PDF:', error);
+            this.showStatus('Failed to generate PDF. Please try again.', 'error');
+        } finally {
+            this.isProcessing = false;
+            this.elements.generateBtn.disabled = false;
         }
-
-        pdf.save('generated.pdf');
-        showResult('PDF generated successfully!', true);
-    } catch (error) {
-        showResult('An error occurred while generating the PDF.', false);
-        console.error(error);
-    } finally {
-        progress.style.display = 'none'; // Hide progress indicator
     }
-});
 
-document.getElementById('generatePowerPoint').addEventListener('click', generatePowerPoint);
-document.getElementById('generateExcel').addEventListener('click', generateExcel);
+    async getImageData(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    }
 
-function loadImage(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = function(event) {
+    async getImageProperties(imgData) {
+        return new Promise((resolve) => {
             const img = new Image();
-            img.src = event.target.result;
-            img.onload = () => resolve(img);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-    });
-}
+            img.onload = () => {
+                const maxWidth = 180;
+                const ratio = img.height / img.width;
+                resolve({
+                    width: maxWidth,
+                    height: maxWidth * ratio
+                });
+            };
+            img.src = imgData;
+        });
+    }
 
-function getBase64Image(img) {
-    const canvas = document.createElement('canvas');
-    canvas.width = img.width;
-    canvas.height = img.height;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0);
-    return canvas.toDataURL('image/jpeg');
-}
+    async readFileAsText(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = reject;
+            reader.readAsText(file);
+        });
+    }
 
-function readFile(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = function(event) {
-            resolve(event.target.result);
-        };
-        reader.onerror = reject;
-        reader.readAsText(file);
-    });
-}
+    showStatus(message, type = 'info') {
+        this.elements.result.textContent = message;
+        this.elements.result.className = `status ${type}`;
+        this.elements.result.style.display = 'block';
 
-function showResult(message, isSuccess) {
-    const resultDiv = document.getElementById('result');
-    resultDiv.textContent = message;
-    resultDiv.style.color = isSuccess ? 'green' : 'red';
-    resultDiv.style.display = 'block';
-}
-
-// Drag and Drop Support
-const dropZone = document.getElementById('dropZone');
-const fileInput = document.getElementById('fileInput');
-
-dropZone.addEventListener('dragover', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    dropZone.style.backgroundColor = '#eee';
-});
-
-dropZone.addEventListener('dragleave', () => {
-    dropZone.style.backgroundColor = '';
-});
-
-dropZone.addEventListener('drop', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    dropZone.style.backgroundColor = '';
-    fileInput.files = event.dataTransfer.files;
-    previewFiles(event.dataTransfer.files);
-});
-
-fileInput.addEventListener('change', () => {
-    previewFiles(fileInput.files);
-});
-
-function previewFiles(files) {
-    const previewDiv = document.getElementById('preview');
-    previewDiv.innerHTML = '';
-
-    for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const fileType = file.type;
-
-        if (fileType.startsWith('image/')) {
-            loadImage(file).then(img => {
-                previewDiv.appendChild(img);
-            });
-        } else if (fileType === 'text/plain') {
-            readFile(file).then(text => {
-                const textElement = document.createElement('pre');
-                textElement.textContent = text;
-                previewDiv.appendChild(textElement);
-            });
+        if (type !== 'info') {
+            setTimeout(() => {
+                this.elements.result.style.display = 'none';
+            }, 5000);
         }
     }
-}
 
-function generatePowerPoint() {
-    const files = fileInput.files;
-    let content = `PowerPoint Presentation Content:\n`;
-
-    for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        content += `Slide ${i + 1}: ${file.name}\n`;
-        content += `- Type: ${file.type}\n`;
-        content += `- Size: ${file.size} bytes\n\n`;
+    formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
-
-    downloadTextFile(content, 'presentation.txt');
 }
 
-function generateExcel() {
-    const files = fileInput.files;
-    let content = `File Name,File Type,File Size (bytes)\n`;
-
-    for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        content += `${file.name},${file.type},${file.size}\n`;
-    }
-
-    downloadTextFile(content, 'file_data.csv');
-}
-
-function downloadTextFile(content, fileName) {
-    const element = document.createElement('a');
-    element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(content));
-    element.setAttribute('download', fileName);
-    element.style.display = 'none';
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-}
+// Initialize the application
+document.addEventListener('DOMContentLoaded', () => {
+    window.fileConverter = new FileConverter();
+});
